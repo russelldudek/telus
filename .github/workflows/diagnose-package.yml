@@ -14,7 +14,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
-      - name: Solve package corruption from validated checksum
+      - name: Repair identified package corruption region
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -24,46 +24,41 @@ jobs:
           import hashlib
 
           root = Path('.campaign')
-          chunks = [root / f'chunk-{i:02d}' for i in range(6)]
-          values = [path.read_text() for path in chunks]
-          expected_sha = '3627f60349313fbf2df37fe35611a5eae5630a59d7db99cfc0b68c5f8b469669'
-          alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+          paths = [root / f'chunk-{i:02d}' for i in range(6)]
+          parts = [path.read_text() for path in paths]
+          expected = '3627f60349313fbf2df37fe35611a5eae5630a59d7db99cfc0b68c5f8b469669'
 
-          def verify(parts):
+          def matches(candidate):
               try:
-                  archive = base64.b64decode(''.join(parts), validate=True)
+                  archive = base64.b64decode(candidate + ''.join(parts[1:]), validate=True)
               except Exception:
-                  return False, None
-              if hashlib.sha256(archive).hexdigest() != expected_sha:
-                  return False, None
+                  return False
+              if hashlib.sha256(archive).hexdigest() != expected:
+                  return False
               gzip.decompress(archive)
-              return True, archive
+              return True
 
-          ok, _ = verify(values)
-          if ok:
-              print('Campaign package already matches the validated archive checksum.')
-              raise SystemExit(0)
+          damaged = parts[0]
+          marker = damaged.find('Sp57')
+          print(f'chunk-00 length={len(damaged)} marker={marker}')
+          print('remote context:', repr(damaged[max(0, marker-32):marker+48]))
 
-          damaged = values[0]
-          suffix = ''.join(values[1:])
-          print(f'chunk-00 length={len(damaged)}; searching one missing base64 character')
-          for position in range(len(damaged) + 1):
-              left = damaged[:position]
-              right = damaged[position:]
-              for character in alphabet:
-                  candidate = left + character + right
-                  try:
-                      archive = base64.b64decode(candidate + suffix, validate=True)
-                  except Exception:
-                      continue
-                  if hashlib.sha256(archive).hexdigest() == expected_sha:
-                      gzip.decompress(archive)
-                      chunks[0].write_text(candidate)
-                      print(f'REPAIRED position={position} character={character!r}')
-                      print(f'context={candidate[max(0, position-24):position+25]}')
-                      print(f'chunk-00 sha256={hashlib.sha256(candidate.encode()).hexdigest()}')
-                      raise SystemExit(0)
-          raise SystemExit('No one-character insertion produced the validated archive checksum.')
+          replacements = [
+              ('Sp57W222z6', 'Sp57V4222z6'),
+              ('Sp57W2222z6', 'Sp57V4222z6'),
+              ('Sp57V222z6', 'Sp57V4222z6'),
+          ]
+          for old, new in replacements:
+              if old not in damaged:
+                  continue
+              candidate = damaged.replace(old, new, 1)
+              print(f'testing {old!r} -> {new!r}; length={len(candidate)}')
+              if matches(candidate):
+                  paths[0].write_text(candidate)
+                  print(f'REPAIRED {old!r} -> {new!r}')
+                  print(f'chunk-00 sha256={hashlib.sha256(candidate.encode()).hexdigest()}')
+                  raise SystemExit(0)
+          raise SystemExit('Identified-region replacements did not recover the validated archive.')
           PY
       - name: Commit repaired package chunk
         run: |
