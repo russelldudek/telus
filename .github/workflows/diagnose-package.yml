@@ -5,27 +5,72 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   diagnose:
     runs-on: ubuntu-latest
     steps:
-      - name: Inspect and decode package
-        env:
-          HEAD_REF: ${{ github.head_ref }}
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Solve package corruption from validated checksum
         run: |
-          set -euxo pipefail
-          git clone --depth 1 --branch "$HEAD_REF" https://github.com/${{ github.repository }}.git repo
-          cd repo
-          find .campaign -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-          printf 'chunk-00 tail: '
-          tail -c 48 .campaign/chunk-00
-          printf '\n'
-          sha256sum .campaign/chunk-00
-          cat .campaign/chunk-* > /tmp/telus-campaign.b64
-          wc -c /tmp/telus-campaign.b64
-          base64 --decode /tmp/telus-campaign.b64 > /tmp/telus-campaign.tar.gz
-          sha256sum /tmp/telus-campaign.tar.gz
-          echo '3627f60349313fbf2df37fe35611a5eae5630a59d7db99cfc0b68c5f8b469669  /tmp/telus-campaign.tar.gz' | sha256sum --check
-          tar -tzf /tmp/telus-campaign.tar.gz | sed -n '1,40p'
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import gzip
+          import hashlib
+
+          root = Path('.campaign')
+          chunks = [root / f'chunk-{i:02d}' for i in range(6)]
+          values = [path.read_text() for path in chunks]
+          expected_sha = '3627f60349313fbf2df37fe35611a5eae5630a59d7db99cfc0b68c5f8b469669'
+          alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+          def verify(parts):
+              try:
+                  archive = base64.b64decode(''.join(parts), validate=True)
+              except Exception:
+                  return False, None
+              if hashlib.sha256(archive).hexdigest() != expected_sha:
+                  return False, None
+              gzip.decompress(archive)
+              return True, archive
+
+          ok, _ = verify(values)
+          if ok:
+              print('Campaign package already matches the validated archive checksum.')
+              raise SystemExit(0)
+
+          damaged = values[0]
+          suffix = ''.join(values[1:])
+          print(f'chunk-00 length={len(damaged)}; searching one missing base64 character')
+          for position in range(len(damaged) + 1):
+              left = damaged[:position]
+              right = damaged[position:]
+              for character in alphabet:
+                  candidate = left + character + right
+                  try:
+                      archive = base64.b64decode(candidate + suffix, validate=True)
+                  except Exception:
+                      continue
+                  if hashlib.sha256(archive).hexdigest() == expected_sha:
+                      gzip.decompress(archive)
+                      chunks[0].write_text(candidate)
+                      print(f'REPAIRED position={position} character={character!r}')
+                      print(f'context={candidate[max(0, position-24):position+25]}')
+                      print(f'chunk-00 sha256={hashlib.sha256(candidate.encode()).hexdigest()}')
+                      raise SystemExit(0)
+          raise SystemExit('No one-character insertion produced the validated archive checksum.')
+          PY
+      - name: Commit repaired package chunk
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .campaign/chunk-00
+          git diff --cached --quiet && exit 0
+          git commit -m 'Repair truncated campaign package chunk'
+          git push origin HEAD:${{ github.head_ref }}
