@@ -23,7 +23,6 @@ jobs:
           set -euo pipefail
           cat .campaign/chunk-* | base64 --decode > /tmp/telus-campaign.tar.gz
           echo '3627f60349313fbf2df37fe35611a5eae5630a59d7db99cfc0b68c5f8b469669  /tmp/telus-campaign.tar.gz' | sha256sum --check
-          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .campaign ! -name .github -exec rm -rf {} +
           tar -xzf /tmp/telus-campaign.tar.gz -C .
 
       - uses: actions/setup-python@v5
@@ -75,15 +74,13 @@ jobs:
           print('PDF QA passed')
           PY
 
-      - name: Replace bootstrap with clean public tree
+      - name: Commit candidate-facing artifacts only
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf .campaign
-          rm -f .github/workflows/publish-campaign.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          git add .nojekyll index.html resume.html cover-letter.html interview-brief.html 120-day-plan.html portfolio-investment-memo.html styles.css brand-tokens.css app.js README.md brand-intelligence.md sources.md artifact-manifest.json campaign-audit.md assets tests docs
           git diff --cached --quiet && exit 0
           git commit -m 'Publish TELUS Digital CX AI Delivery campaign'
           git push
