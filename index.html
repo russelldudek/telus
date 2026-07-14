@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Russell Dudek's candidate vision for TELUS Digital Managing Director, CX AI Delivery.">
+  <title>TELUS Digital CX AI Delivery | Russell Dudek</title>
+  <style>
+    :root{font-family:Arial,Helvetica,sans-serif;color:#2c2c2c;background:#f7f7f8}*{box-sizing:border-box}
+    body{margin:0}.bundle-loading{min-height:100vh;display:grid;place-items:center;padding:2rem;background:linear-gradient(135deg,#4b286d,#2b1640);color:white}.bundle-card{max-width:42rem;padding:2rem;border:1px solid rgba(255,255,255,.25);border-radius:1rem;background:rgba(255,255,255,.09);box-shadow:0 1.5rem 4rem rgba(0,0,0,.25)}.bundle-card h1{margin:.35rem 0 1rem;font-size:clamp(2rem,6vw,4rem);line-height:.95}.bundle-card p{line-height:1.6}.bundle-kicker{color:#b9f37a;font-weight:700;letter-spacing:.12em;text-transform:uppercase}.bundle-error a{color:#b9f37a}
+  </style>
+</head>
+<body>
+  <main class="bundle-loading" aria-live="polite">
+    <section class="bundle-card">
+      <div class="bundle-kicker">TELUS Digital · Candidate campaign</div>
+      <h1>Loading the CX AI workshare.</h1>
+      <p>Reassembling the validated candidate-facing campaign package.</p>
+    </section>
+  </main>
+<script>
+(() => {
+  const chunkCount = 6;
+  const rawBase = 'https://raw.githubusercontent.com/russelldudek/telus/main/.campaign/';
+  const decoder = new TextDecoder();
+  let files = {};
+
+  const bytesToBase64 = bytes => {
+    let binary = '';
+    const step = 0x8000;
+    for (let i = 0; i < bytes.length; i += step) binary += String.fromCharCode(...bytes.subarray(i, i + step));
+    return btoa(binary);
+  };
+
+  async function loadBundle() {
+    const parts = await Promise.all(Array.from({length: chunkCount}, (_, i) =>
+      fetch(`${rawBase}chunk-${String(i).padStart(2,'0')}`, {cache:'no-store'}).then(r => {
+        if (!r.ok) throw new Error(`Campaign package part ${i + 1} was unavailable.`);
+        return r.text();
+      })
+    ));
+    const binary = atob(parts.join('').replace(/\s+/g,''));
+    const compressed = Uint8Array.from(binary, c => c.charCodeAt(0));
+    if (!('DecompressionStream' in window)) throw new Error('This browser cannot open the compressed campaign package. Please use a current browser.');
+    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const tar = new Uint8Array(await new Response(stream).arrayBuffer());
+    files = parseTar(tar);
+    const logo = files['assets/brand/telus-digital-logo.svg'];
+    if (logo) files.__logoData = `data:image/svg+xml;base64,${bytesToBase64(new TextEncoder().encode(logo))}`;
+  }
+
+  function parseTar(bytes) {
+    const result = {};
+    for (let offset = 0; offset + 512 <= bytes.length;) {
+      const header = bytes.subarray(offset, offset + 512);
+      if (header.every(byte => byte === 0)) break;
+      let name = decoder.decode(header.subarray(0,100)).replace(/\0.*$/,'').replace(/^\.\//,'');
+      const prefix = decoder.decode(header.subarray(345,500)).replace(/\0.*$/,'');
+      if (prefix) name = `${prefix}/${name}`;
+      const sizeText = decoder.decode(header.subarray(124,136)).replace(/\0.*$/,'').trim();
+      const size = parseInt(sizeText || '0', 8);
+      const type = String.fromCharCode(header[156] || 48);
+      offset += 512;
+      if ((type === '0' || type === '\0') && name) result[name] = decoder.decode(bytes.subarray(offset, offset + size));
+      offset += Math.ceil(size / 512) * 512;
+    }
+    return result;
+  }
+
+  function routeFromHash() {
+    const params = new URLSearchParams(location.hash.replace(/^#/,''));
+    const requested = params.get('file') || 'index.html';
+    return files[requested] ? requested : 'index.html';
+  }
+
+  function rewriteLinks(root) {
+    root.querySelectorAll('img[src="assets/brand/telus-digital-logo.svg"]').forEach(img => img.src = files.__logoData || img.src);
+    root.querySelectorAll('a[href]').forEach(link => {
+      const href = link.getAttribute('href');
+      if (!href) return;
+      if (/^docs\/.*\.pdf$/i.test(href)) {
+        link.setAttribute('href','#');
+        link.textContent = 'Print / Save PDF';
+        link.addEventListener('click', event => { event.preventDefault(); window.print(); });
+      } else if (/^[^:#?]+\.html(?:#.*)?$/i.test(href)) {
+        const [page, anchor] = href.split('#');
+        link.setAttribute('href', `#file=${encodeURIComponent(page)}${anchor ? `&anchor=${encodeURIComponent(anchor)}` : ''}`);
+      }
+    });
+  }
+
+  function render() {
+    const file = routeFromHash();
+    const source = files[file];
+    const parsed = new DOMParser().parseFromString(source, 'text/html');
+    document.title = parsed.title || 'TELUS Digital CX AI Delivery | Russell Dudek';
+    document.body.className = parsed.body.className;
+    document.body.innerHTML = parsed.body.innerHTML;
+    let style = document.getElementById('campaign-styles');
+    if (!style) {
+      style = document.createElement('style');
+      style.id = 'campaign-styles';
+      style.textContent = `${files['brand-tokens.css'] || ''}\n${files['styles.css'] || ''}`;
+      document.head.appendChild(style);
+    }
+    rewriteLinks(document);
+    try { (0,eval)(files['app.js'] || ''); } catch (error) { console.error(error); }
+    const params = new URLSearchParams(location.hash.replace(/^#/,''));
+    const anchor = params.get('anchor');
+    if (anchor) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView());
+    else scrollTo(0,0);
+  }
+
+  loadBundle().then(() => {
+    render();
+    addEventListener('hashchange', render);
+  }).catch(error => {
+    document.body.innerHTML = `<main class="bundle-loading"><section class="bundle-card bundle-error"><div class="bundle-kicker">Campaign package error</div><h1>The workshare could not load.</h1><p>${error.message}</p><p><a href="https://github.com/russelldudek/telus">Open the public campaign repository</a></p></section></main>`;
+  });
+})();
+</script>
+</body>
+</html>
