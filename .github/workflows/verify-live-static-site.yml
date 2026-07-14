@@ -22,7 +22,7 @@ jobs:
           ! grep -q 'The workshare could not load' /tmp/index.html
           curl --fail --location --retry 18 --retry-all-errors --retry-delay 5 \
             "${SITE_URL}resume.html" --output /tmp/resume.html
-          grep -q 'AI DELIVERY &amp; OPERATING TRANSFORMATION' /tmp/resume.html
+          grep -q 'AI-Enabled Operations &amp; Delivery Systems Leader' /tmp/resume.html
           curl --fail --location --retry 18 --retry-all-errors --retry-delay 5 \
             "${SITE_URL}docs/Russell-Dudek-TELUS-Digital-Resume.pdf" --output /tmp/resume.pdf
           test "$(head -c 4 /tmp/resume.pdf)" = '%PDF'
