@@ -1,0 +1,19 @@
+:root {
+  --brand-purple: #4B286D; /* official TELUS Purple */
+  --brand-green: #66CC00; /* official TELUS Green - decorative */
+  --brand-green-accessible: #2B8000; /* official accessible green */
+  --brand-white: #FFFFFF;
+  --brand-shark: #2A2C2E;
+  --brand-shuttle: #54595F;
+  --brand-raven: #71757B;
+  --brand-gainsboro: #D8D8D8;
+  --brand-athens: #F7F7F8;
+  --brand-lilac: #F2EFF4;
+  --brand-panache: #F4F9F2;
+  --campaign-purple-deep: #2F1747; /* candidate-original depth tone derived from TELUS Purple */
+  --campaign-mint: #DFF4CF; /* candidate-original workshare state */
+  --shadow-soft: 0 18px 50px rgba(42,44,46,.10);
+  --radius-sm: 8px;
+  --radius-md: 18px;
+  --radius-lg: 28px;
+}
