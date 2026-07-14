@@ -22,6 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare browser-readable campaign package
+        run: |
+          rm -rf campaign
+          cp -R .campaign campaign
+          test -s campaign/chunk-00
+          test -s campaign/chunk-05
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
