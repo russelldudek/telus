@@ -21,7 +21,7 @@
 <script>
 (() => {
   const chunkCount = 6;
-  const rawBase = 'https://raw.githubusercontent.com/russelldudek/telus/main/.campaign/';
+  const packageBase = new URL('.campaign/', document.baseURI);
   const decoder = new TextDecoder();
   let files = {};
 
@@ -33,12 +33,13 @@
   };
 
   async function loadBundle() {
-    const parts = await Promise.all(Array.from({length: chunkCount}, (_, i) =>
-      fetch(`${rawBase}chunk-${String(i).padStart(2,'0')}`, {cache:'no-store'}).then(r => {
-        if (!r.ok) throw new Error(`Campaign package part ${i + 1} was unavailable.`);
+    const parts = await Promise.all(Array.from({length: chunkCount}, (_, i) => {
+      const partUrl = new URL(`chunk-${String(i).padStart(2,'0')}`, packageBase);
+      return fetch(partUrl, {cache:'no-store', credentials:'same-origin'}).then(r => {
+        if (!r.ok) throw new Error(`Campaign package part ${i + 1} was unavailable (${r.status}).`);
         return r.text();
-      })
-    ));
+      });
+    }));
     const binary = atob(parts.join('').replace(/\s+/g,''));
     const compressed = Uint8Array.from(binary, c => c.charCodeAt(0));
     if (!('DecompressionStream' in window)) throw new Error('This browser cannot open the compressed campaign package. Please use a current browser.');
