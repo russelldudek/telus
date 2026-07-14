@@ -1,0 +1,29 @@
+name: Verify live static campaign
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify live homepage, resume, and PDF
+        env:
+          SITE_URL: https://russelldudek.github.io/telus/
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 18 --retry-all-errors --retry-delay 5 \
+            "$SITE_URL" --output /tmp/index.html
+          grep -q 'Redesign the <strong>workshare.</strong>' /tmp/index.html
+          ! grep -q 'The workshare could not load' /tmp/index.html
+          curl --fail --location --retry 18 --retry-all-errors --retry-delay 5 \
+            "${SITE_URL}resume.html" --output /tmp/resume.html
+          grep -q 'AI DELIVERY &amp; OPERATING TRANSFORMATION' /tmp/resume.html
+          curl --fail --location --retry 18 --retry-all-errors --retry-delay 5 \
+            "${SITE_URL}docs/Russell-Dudek-TELUS-Digital-Resume.pdf" --output /tmp/resume.pdf
+          test "$(head -c 4 /tmp/resume.pdf)" = '%PDF'
+          echo 'Live TELUS campaign verified.'
