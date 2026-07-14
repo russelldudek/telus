@@ -1,4 +1,4 @@
-name: Candidate campaign Pages
+name: Publish static candidate campaign
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
   statuses: write
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  publish:
     if: github.actor != 'github-actions[bot]'
     environment:
       name: github-pages
@@ -24,84 +24,114 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare browser-readable campaign package
+
+      - name: Reassemble validated campaign source
         run: |
-          rm -rf campaign
-          cp -R .campaign campaign
-          test -s campaign/chunk-00
-          test -s campaign/chunk-05
+          set -euo pipefail
+          cat .campaign/chunk-* | base64 --decode > /tmp/telus-campaign.tar.gz
+          echo '3627f60349313fbf2df37fe35611a5eae5630a59d7db99cfc0b68c5f8b469669  /tmp/telus-campaign.tar.gz' | sha256sum --check
+          rm -rf /tmp/telus-site
+          mkdir -p /tmp/telus-site
+          tar -xzf /tmp/telus-campaign.tar.gz -C /tmp/telus-site
+          rm -rf /tmp/telus-site/.github
+          rsync -a /tmp/telus-site/ ./
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install document tooling
+        run: python -m pip install --disable-pip-version-check weasyprint pypdf
+
+      - name: Generate committed documents
+        run: |
+          set -euo pipefail
+          mkdir -p docs
+          weasyprint resume.html docs/Russell-Dudek-TELUS-Digital-Resume.pdf
+          weasyprint cover-letter.html docs/Russell-Dudek-TELUS-Digital-Cover-Letter.pdf
+          weasyprint interview-brief.html docs/Russell-Dudek-TELUS-Digital-Interview-Brief.pdf
+          weasyprint 120-day-plan.html docs/Russell-Dudek-TELUS-Digital-120-Day-Plan.pdf
+          weasyprint portfolio-investment-memo.html docs/Russell-Dudek-TELUS-Digital-Portfolio-Investment-Memo.pdf
+
+      - name: Validate source and exact pagination
+        run: |
+          set -euo pipefail
+          python tests/site_qa.py
+          python - <<'PY'
+          from pathlib import Path
+          from pypdf import PdfReader
+
+          expected = {
+              'Russell-Dudek-TELUS-Digital-Resume.pdf': 2,
+              'Russell-Dudek-TELUS-Digital-Cover-Letter.pdf': 1,
+              'Russell-Dudek-TELUS-Digital-Interview-Brief.pdf': 4,
+              'Russell-Dudek-TELUS-Digital-120-Day-Plan.pdf': 2,
+              'Russell-Dudek-TELUS-Digital-Portfolio-Investment-Memo.pdf': 1,
+          }
+          for name, count in expected.items():
+              path = Path('docs') / name
+              assert path.read_bytes()[:4] == b'%PDF', name
+              assert len(PdfReader(path).pages) == count, name
+          print('PDF QA passed')
+          PY
+
+      - name: Commit the real static campaign
+        id: published
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m 'Publish static TELUS Digital candidate campaign'
+            git push
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare clean Pages artifact
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/pages-site
+          mkdir -p /tmp/pages-site
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.campaign' \
+            ./ /tmp/pages-site/
+          test -s /tmp/pages-site/index.html
+          test -s /tmp/pages-site/styles.css
+          test -s /tmp/pages-site/docs/Russell-Dudek-TELUS-Digital-Resume.pdf
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: /tmp/pages-site
+
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
 
-  verify-live:
-    if: github.actor != 'github-actions[bot]'
-    needs: deploy
-    runs-on: ubuntu-latest
-    steps:
-      - name: Verify live loader and campaign package
+      - name: Verify live static campaign
         env:
           SITE_URL: https://russelldudek.github.io/telus/
         run: |
           set -euo pipefail
-          mkdir -p /tmp/telus-live
           curl --fail --location --retry 12 --retry-all-errors --retry-delay 5 \
-            "$SITE_URL" --output /tmp/telus-live/index.html
-          grep -q "new URL('campaign/', document.baseURI)" /tmp/telus-live/index.html
-          for i in 00 01 02 03 04 05; do
-            curl --fail --location --retry 12 --retry-all-errors --retry-delay 5 \
-              "${SITE_URL}campaign/chunk-${i}" --output "/tmp/telus-live/chunk-${i}"
-            test -s "/tmp/telus-live/chunk-${i}"
-          done
-          node <<'NODE'
-          const fs = require('fs');
-          const decoder = new TextDecoder();
-          const parts = ['00','01','02','03','04','05']
-            .map(id => fs.readFileSync(`/tmp/telus-live/chunk-${id}`, 'utf8'));
-          const compressed = Uint8Array.from(
-            Buffer.from(parts.join('').replace(/\s+/g, ''), 'base64')
-          );
-          function parseTar(bytes) {
-            const result = {};
-            for (let offset = 0; offset + 512 <= bytes.length;) {
-              const header = bytes.subarray(offset, offset + 512);
-              if (header.every(byte => byte === 0)) break;
-              let name = decoder.decode(header.subarray(0, 100)).replace(/\0.*$/, '').replace(/^\.\//, '');
-              const prefix = decoder.decode(header.subarray(345, 500)).replace(/\0.*$/, '');
-              if (prefix) name = `${prefix}/${name}`;
-              const sizeText = decoder.decode(header.subarray(124, 136)).replace(/\0.*$/, '').trim();
-              const size = parseInt(sizeText || '0', 8);
-              const type = String.fromCharCode(header[156] || 48);
-              offset += 512;
-              if ((type === '0' || type === '\0') && name) {
-                result[name] = decoder.decode(bytes.subarray(offset, offset + size));
-              }
-              offset += Math.ceil(size / 512) * 512;
-            }
-            return result;
-          }
-          (async () => {
-            const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));
-            const tar = new Uint8Array(await new Response(stream).arrayBuffer());
-            const files = parseTar(tar);
-            if (!files['index.html']?.includes('Redesign the <strong>workshare.</strong>')) {
-              throw new Error('Live package does not contain the validated campaign homepage.');
-            }
-            if (!files['app.js'] || !files['styles.css'] || !files['resume.html']) {
-              throw new Error('Live package is missing required campaign files.');
-            }
-            console.log(`Verified ${Object.keys(files).length} live campaign files.`);
-          })().catch(error => { console.error(error); process.exit(1); });
-          NODE
+            "$SITE_URL" --output /tmp/live-index.html
+          grep -q 'Redesign the <strong>workshare.</strong>' /tmp/live-index.html
+          ! grep -q 'The workshare could not load' /tmp/live-index.html
+          curl --fail --location --retry 12 --retry-all-errors --retry-delay 5 \
+            "${SITE_URL}resume.html" --output /tmp/live-resume.html
+          grep -q 'AI DELIVERY &amp; OPERATING TRANSFORMATION' /tmp/live-resume.html
+          curl --fail --location --retry 12 --retry-all-errors --retry-delay 5 \
+            "${SITE_URL}docs/Russell-Dudek-TELUS-Digital-Resume.pdf" --output /tmp/live-resume.pdf
+          test "$(head -c 4 /tmp/live-resume.pdf)" = '%PDF'
+
       - name: Publish exact-head live status
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          SOURCE_SHA: ${{ github.sha }}
+          PUBLISHED_SHA: ${{ steps.published.outputs.sha }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           curl --fail --location \
@@ -109,5 +139,5 @@ jobs:
             --header "Accept: application/vnd.github+json" \
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/statuses/${SOURCE_SHA}" \
-            --data "{\"state\":\"success\",\"context\":\"candidate-campaign/pages-live\",\"description\":\"Live loader and six-part campaign package verified\",\"target_url\":\"${RUN_URL}\"}"
+            "https://api.github.com/repos/${REPOSITORY}/statuses/${PUBLISHED_SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"candidate-campaign/pages-live\",\"description\":\"Static campaign and PDF verified live\",\"target_url\":\"${RUN_URL}\"}"
