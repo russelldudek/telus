@@ -19,6 +19,10 @@ jobs:
           git clone --depth 1 --branch "$HEAD_REF" https://github.com/${{ github.repository }}.git repo
           cd repo
           find .campaign -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          printf 'chunk-00 tail: '
+          tail -c 48 .campaign/chunk-00
+          printf '\n'
+          sha256sum .campaign/chunk-00
           cat .campaign/chunk-* > /tmp/telus-campaign.b64
           wc -c /tmp/telus-campaign.b64
           base64 --decode /tmp/telus-campaign.b64 > /tmp/telus-campaign.tar.gz
